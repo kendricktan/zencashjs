@@ -1,21 +1,10 @@
 // @flow
 var bs58check = require('bs58check')
 var secp256k1 = require('secp256k1')
-var int64buffer = require('int64-buffer')
 var zconfig = require('./config')
 var zcrypto = require('./crypto')
 var zutils = require('./utils')
-
-/* Useful OP codes for the scripting language
- * Obtained from: https://github.com/ZencashOfficial/zen/blob/master/src/script/script.h
- */
-const OP_DUP = '76'
-const OP_HASH160 = 'a9'
-const OP_EQUALVERIFY = '88'
-const OP_CHECKSIG = 'ac'
-const OP_CHECKBLOCKATHEIGHT = 'b4'
-const OP_EQUAL = '87'
-const OP_REVERSED = '89'
+var opcodes = require('./opcodes')
 
 /* SIGHASH Codes
  * Obtained from: https://github.com/ZencashOfficial/zen/blob/master/src/script/interpreter.h
@@ -110,17 +99,17 @@ function mkPubkeyHashReplayScript (address: string): string {
 
   // '14' is the length of the subAddrHex (in bytes)
   return (
-    OP_DUP +
-    OP_HASH160 +
+    opcodes.OP_DUP +
+    opcodes.OP_HASH160 +
     getStringBufferLength(subAddrHex) +
     subAddrHex +
-    OP_EQUALVERIFY +
-    OP_CHECKSIG +
+    opcodes.OP_EQUALVERIFY +
+    opcodes.OP_CHECKSIG +
     blockHashLength +
     blockHashHex +
     blockHeightLength +
     blockHeightHex +
-    OP_CHECKBLOCKATHEIGHT
+    opcodes.OP_CHECKBLOCKATHEIGHT
   )
 }
 
@@ -133,7 +122,7 @@ function mkScriptHashScript (address: string): string {
   var addrHex = bs58check.decode(address).toString('hex')
   var subAddrHex = addrHex.substring(4, addrHex.length) // Cut out the '00' (we also only want 14 bytes instead of 16)
   // '14' is the length of the subAddrHex (in bytes)
-  return OP_HASH160 + '14' + subAddrHex + OP_EQUAL
+  return opcodes.OP_HASH160 + '14' + subAddrHex + opcodes.OP_EQUAL
 }
 
 /*
@@ -143,7 +132,7 @@ function mkScriptHashScript (address: string): string {
  */
 function addressToScript (address: string): string {
   // P2SH starts with a 3 or 2
-  if (address[0] === '3' || address[0] === '2') {
+  if (address[1] === 's' || address[1] === 't') {
     return mkScriptHashScript(address)
   }
 
@@ -164,7 +153,7 @@ function signatureForm (
   hashcode: number
 ): TXOBJ {
   // Copy object so we don't rewrite it
-  var newTx = JSON.parse(JSON.stringify(txObj));  
+  var newTx = JSON.parse(JSON.stringify(txObj));
 
   for (var j = 0; j < newTx.ins.length; j++) {
     newTx.ins[j].script = ''
@@ -223,8 +212,11 @@ function serializeTx (txObj: TXOBJ): string {
     // https://stackoverflow.com/a/35743335
     var _buf32 = Buffer.alloc(8)
 
-    _buf32.writeInt32LE(o.satoshis & -1, 0)
-    _buf32.writeUInt32LE(Math.floor(o.satoshis / 0x100000000), 4)
+    const _big = ~~(o.satoshis / 0xFFFFFFFF)
+    const _low = (o.satoshis % 0xFFFFFFFF) - _big
+
+    _buf32.writeUInt32LE(_big, 0)
+    _buf32.writeUInt32LE(_low, 4)
 
     serializedTx += _buf32.toString('hex')
     serializedTx += getStringBufferLength(o.script)
@@ -303,21 +295,21 @@ function signTx (
     .sign(Buffer.from(msg, 'hex'), Buffer.from(privKey, 'hex'))
     .signature.toString('hex')
 
-  // Encode signature  
+  // Encode signature
   var b1 = rawsig.substr(0, 64)
-  var b2 = rawsig.substr(64, 128)  
+  var b2 = rawsig.substr(64, 128)
 
   if ('89abcdef'.indexOf(b1[0]) != -1) {
     b1 = '00' + b1
   }
   if ('89abcdef'.indexOf(b2[0]) != -1) {
     b2 = '00' + b2
-  }  
+  }
 
   // http://www.righto.com/2014/02/bitcoins-hard-way-using-raw-bitcoin.html
   // 02 is the integer, 30 is the sequence
   var left = '02' + getStringBufferLength(b1) + b1
-  var right = '02' + getStringBufferLength(b2) + b2  
+  var right = '02' + getStringBufferLength(b2) + b2
   const sig = '30' + getStringBufferLength(left + right) + left + right
   const sigAndHashcode = sig + Buffer.from([hashcode]).toString('hex')
 
